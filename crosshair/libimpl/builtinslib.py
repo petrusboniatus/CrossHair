@@ -4400,6 +4400,137 @@ def _str_contains(
         return SymbolicBool(z3.Or(*conjunctions))
 
 
+
+_SMT_INT_SET_SORT = z3.SeqSort(z3.IntSort())
+
+
+class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
+    def __init__(self, smtvar: Union[str, z3.ExprRef], typ: Type[Any] = FrozenSet[int]):
+        SymbolicValue.__init__(self, smtvar, typ)
+
+    @classmethod
+    def _ch_smt_sort(cls) -> z3.SortRef:
+        return _SMT_INT_SET_SORT
+
+    @classmethod
+    def _pytype(cls) -> Type[Any]:
+        return Set[int]
+
+    def __init_var__(self, typ, varname):
+        set_as_seq = z3.Const(varname + self.statespace.uniq(), _SMT_INT_SET_SORT)
+        return set_as_seq
+
+    def __len__(self):
+        with NoTracing():
+            return SymbolicInt(z3.Length(self.var))
+
+    def __bool__(self):
+        with NoTracing():
+            return SymbolicBool(z3.Length(self.var) != 0).__bool__()
+
+    def __ch_realize__(self) -> object:
+        return frozenset(self.__iter__())
+
+    def __iter__(self) -> object:
+        with NoTracing():
+            i = 0
+            current_element = None
+            while SymbolicBool(i < z3.Length(self.var)).__bool__():
+                sym_int = self.var[i]
+                proxy_int = SymbolicInt(sym_int)
+                if i != 0:
+                    self.statespace.add(current_element < sym_int)
+                current_element = sym_int
+                i += 1
+                with ResumedTracing():
+                    yield proxy_int
+
+
+    def __contains__(self, other)-> bool:
+        with NoTracing():
+            if isinstance(other, int):
+                return SymbolicBool(z3.Contains(self.var, z3.Unit(z3.IntVal(other))))
+            elif isinstance(other, SymbolicInt):
+                return SymbolicBool(z3.Contains(self.var, z3.Unit(other.var)))
+            else:
+                raise NotImplementedError
+
+    def __eq__(self, other)-> bool:
+        with NoTracing():
+            if isinstance(other, SymbolicIntegerSet):
+                return SymbolicBool(self.var == other.var)
+
+            if not isinstance(other, (set, frozenset, SymbolicSet, SymbolicIntegerSet , collections.abc.Set)):
+                return False
+
+            with ResumedTracing():
+                if len(self) != len(other):
+                    return False
+                # Then iterate on self (iteration will create a lot of good symbolic constraints):
+                for item in self:
+                    # We iterate over other instead of just checking "if item in other:" because we
+                    # don't want to hash our symbolic item, which would materialize it.
+                    found = False
+                    for oitem in other:
+                        if item == oitem:
+                            found = True
+                            break
+                    if not found:
+                        return False
+                return True
+
+    def _set_op(self, attr, other):
+        # We need to check the type of other here, because builtin sets
+        # do not accept iterable args (but the abc Set does)
+        if isinstance(other, collections.abc.Set):
+            return getattr(collections.abc.Set, attr)(self, other)
+        else:
+            raise TypeError
+
+    # Hardwire some operations into abc methods
+    # (SymbolicValue defaults these operations into
+    # TypeErrors, but must appear first in the mro)
+    def __ge__(self, other):
+
+        return self._set_op("__ge__", other)
+
+    def __gt__(self, other):
+        return self._set_op("__gt__", other)
+
+    def __le__(self, other):
+        return self._set_op("__le__", other)
+
+    def __lt__(self, other):
+        return self._set_op("__lt__", other)
+
+    def __and__(self, other):
+        return self._set_op("__and__", other)
+
+    __rand__ = __and__
+
+    def __or__(self, other):
+        return self._set_op("__or__", other)
+
+    __ror__ = __or__
+
+    def __xor__(self, other):
+        return self._set_op("__xor__", other)
+
+    __rxor__ = __xor__
+
+    def __sub__(self, other):
+        return self._set_op("__sub__", other)
+    
+    def __repr__(self):
+        return deep_realize(self).__repr__()
+
+    def __hash__(self):
+        return deep_realize(self).__hash__()
+
+    @classmethod
+    def _from_iterable(cls, it):
+        # overrides collections.abc.Set's version
+        return frozenset(it)
 #
 # Registrations
 #
@@ -4427,6 +4558,7 @@ def make_registrations():
     register_type(tuple, make_tuple)
     register_type(set, make_set)
     register_type(frozenset, make_optional_smt(SymbolicFrozenSet))
+    register_type(FrozenSet[int], make_optional_smt(SymbolicIntegerSet))
     register_type(type, make_optional_smt(SymbolicType))
     register_type(
         collections.abc.Callable,

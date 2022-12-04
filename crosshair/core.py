@@ -513,7 +513,10 @@ SymbolicCreationCallback = Union[
 ]
 
 
-def register_type(typ: Type, creator: SymbolicCreationCallback) -> None:
+def register_type(
+        typ: Union[Type, typing._GenericAlias],
+        creator: SymbolicCreationCallback
+) -> None:
     """
     Register a custom creation function to create symbolic values for a type.
 
@@ -523,9 +526,10 @@ def register_type(typ: Type, creator: SymbolicCreationCallback) -> None:
       type parameters will be given to `creator` as additional arguments following the
       factory.
     """
-    assert typ is origin_of(
-        typ
-    ), f'Only origin types may be registered, not "{typ}": try "{origin_of(typ)}" instead.'
+    assert typ is origin_of(typ) or isinstance(typ, typing._GenericAlias), f"""
+        Only origin types may be registered or generic alias from
+        typing module, not "{typ}": try "{origin_of(typ)}" instead.
+     """
     if typ in _SIMPLE_PROXIES:
         raise CrosshairInternal(f'Duplicate type "{typ}" registered')
     _SIMPLE_PROXIES[typ] = creator
@@ -576,7 +580,8 @@ def proxy_for_type(
             return enum_values[-1]
         # It's easy to forget to import crosshair.core_and_libs; check:
         assert _SIMPLE_PROXIES, "No proxy type registrations exist"
-        proxy_factory = _SIMPLE_PROXIES.get(origin)
+        proxy_factory = _SIMPLE_PROXIES.get(typ) or _SIMPLE_PROXIES.get(origin)
+
         if proxy_factory:
             recursive_proxy_factory = SymbolicFactory(space, typ, varname)
             return proxy_factory(recursive_proxy_factory, *type_args)
