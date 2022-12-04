@@ -12,7 +12,7 @@ import typing
 from abc import ABCMeta
 from array import array
 from dataclasses import dataclass
-from functools import wraps
+from functools import wraps, reduce
 from itertools import zip_longest
 from numbers import Integral, Number, Real
 from sys import maxunicode
@@ -4415,6 +4415,7 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
     @classmethod
     def _pytype(cls) -> Type[Any]:
         return Set[int]
+    
 
     def __init_var__(self, typ, varname):
         set_as_seq = z3.Const(varname + self.statespace.uniq(), _SMT_INT_SET_SORT)
@@ -4487,20 +4488,49 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
         else:
             raise TypeError
 
+    def _python_set_to_z3_seq(self, s: Set[int]) -> z3.ExprRef:
+        return reduce(
+            lambda acc, x: z3.Concat(acc, z3.Unit(z3.IntVal(x))),
+            sorted(s),
+            z3.Empty(z3.SeqSort(z3.IntSort()))
+        )
+
+
     # Hardwire some operations into abc methods
     # (SymbolicValue defaults these operations into
     # TypeErrors, but must appear first in the mro)
     def __ge__(self, other):
+        with NoTracing():
+            if isinstance(other, (set, frozenset)):
+                seq = self._python_set_to_z3_seq(other)
+                return SymbolicBool(z3.Contains(self.var, seq))
 
         return self._set_op("__ge__", other)
 
     def __gt__(self, other):
+        with NoTracing():
+            if isinstance(other, (set, frozenset)):
+                plus_1_elemnt = z3.Const("plus_1_elemnt_" + self.statespace.uniq(), z3.IntSort())
+                seq = self._python_set_to_z3_seq(other)
+                return SymbolicBool(z3.Contains(self.var, z3.Concat(seq, z3.Unit(plus_1_elemnt))))
+
         return self._set_op("__gt__", other)
 
     def __le__(self, other):
+        with NoTracing():
+            if isinstance(other, (set, frozenset)):
+                seq = self._python_set_to_z3_seq(other)
+                return SymbolicBool(z3.Contains(seq, self.var))
+
         return self._set_op("__le__", other)
 
     def __lt__(self, other):
+        with NoTracing():
+            if isinstance(other, (set, frozenset)):
+                plus_1_elemnt = z3.Const("plus_1_elemnt_" + self.statespace.uniq(), z3.IntSort())
+                seq = self._python_set_to_z3_seq(other)
+                return SymbolicBool(z3.Contains(seq, z3.Concat(self.var, z3.Unit(plus_1_elemnt))))
+
         return self._set_op("__lt__", other)
 
     def __and__(self, other):

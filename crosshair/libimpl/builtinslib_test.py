@@ -2448,6 +2448,30 @@ def TODO_set_test_subtype_union() -> None:
 
     check_states(f, MessageType.POST_FAIL, AnalysisOptionSet(per_condition_timeout=7.0))
 
+@pytest.mark.parametrize("len_a, expected", [(10, POST_FAIL), (3, CONFIRMED)])
+def test_subset_operations_on_literalls_ok(len_a: int, expected: MessageType) -> None:
+    def f(
+        a: FrozenSet[int],
+        b: FrozenSet[int],
+        c: FrozenSet[int],
+        d: FrozenSet[int]
+    ) -> bool:
+        """
+        pre: a >= {1, 2, 3}
+        pre: b > {1, 2, 3}
+        pre: c <= {1, 2, 3}
+        pre: d < {1, 2, 3}
+        post: _
+        """
+
+        if len(a) < len_a or len(b) < 4 or len(c) > 3 or len(d) > 2:
+            return False
+
+        return True
+
+    import IPython; IPython.embed()
+    check_states(f, expected)
+
 
 def test_set_subset_compare_ok() -> None:
     # a >= b with {'a': {0.0, 1.0}, 'b': {2.0}}
