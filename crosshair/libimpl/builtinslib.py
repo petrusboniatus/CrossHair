@@ -4512,7 +4512,10 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
             if isinstance(other, (set, frozenset)):
                 plus_1_elemnt = z3.Const("plus_1_elemnt_" + self.statespace.uniq(), z3.IntSort())
                 seq = self._python_set_to_z3_seq(other)
-                return SymbolicBool(z3.Contains(self.var, z3.Concat(seq, z3.Unit(plus_1_elemnt))))
+                return SymbolicBool(z3.Or(
+                        z3.Contains(self.var, z3.Concat(seq, z3.Unit(plus_1_elemnt))), 
+                        z3.Contains(self.var, z3.Concat(z3.Unit(plus_1_elemnt), seq))
+                ))
 
         return self._set_op("__gt__", other)
 
@@ -4529,7 +4532,10 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
             if isinstance(other, (set, frozenset)):
                 plus_1_elemnt = z3.Const("plus_1_elemnt_" + self.statespace.uniq(), z3.IntSort())
                 seq = self._python_set_to_z3_seq(other)
-                return SymbolicBool(z3.Contains(seq, z3.Concat(self.var, z3.Unit(plus_1_elemnt))))
+                return SymbolicBool(z3.Or(
+                        z3.Contains(seq, z3.Concat(self.var, z3.Unit(plus_1_elemnt))),
+                        z3.Contains(seq, z3.Concat(z3.Unit(plus_1_elemnt), self.var))
+                ))
 
         return self._set_op("__lt__", other)
 
