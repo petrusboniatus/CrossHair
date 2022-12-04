@@ -4436,6 +4436,7 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
         with NoTracing():
             i = 0
             current_element = None
+            proxy_ints = []
             while SymbolicBool(i < z3.Length(self.var)).__bool__():
                 sym_int = self.var[i]
                 proxy_int = SymbolicInt(sym_int)
@@ -4443,8 +4444,18 @@ class SymbolicIntegerSet(AtomicSymbolicValue, collections.abc.Set):
                     self.statespace.add(current_element < sym_int)
                 current_element = sym_int
                 i += 1
+                proxy_ints.append(proxy_int)
+
+            for e in self._simple_deterministic_order_shuffle(proxy_ints):
                 with ResumedTracing():
-                    yield proxy_int
+                    yield e
+
+    def _simple_deterministic_order_shuffle(self, l: List[int]) -> List[int]:
+        if len(l) < 2:
+            return l
+        
+        cut = len(l)//2
+        return list(reversed(l[cut:])) + l[:cut]
 
 
     def __contains__(self, other)-> bool:

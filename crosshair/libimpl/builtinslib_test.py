@@ -2449,9 +2449,7 @@ def TODO_set_test_subtype_union() -> None:
     check_states(f, MessageType.POST_FAIL, AnalysisOptionSet(per_condition_timeout=7.0))
 
 def test_strict_subset_operations_work_with_elements_left_and_right() -> None:
-    def f(
-        a: FrozenSet[int],
-    ) -> bool:
+    def f(a: FrozenSet[int]) -> bool:
         """
         pre: a > {1, 2, 3}
         pre: a < {-1, 0, 1, 2, 3}
@@ -2460,6 +2458,24 @@ def test_strict_subset_operations_work_with_elements_left_and_right() -> None:
         return False
 
     check_states(f, POST_FAIL)
+
+
+def test_frozen_set_integer_detects_out_of_order_iteration_bugs() -> None:
+    def f(a: FrozenSet[int]) -> bool:
+        """
+        pre: a == {1, -5000, 3}
+        post: _
+        """
+        previous = None 
+        for i in a:
+            if previous and i < previous:
+                return False
+            previous = i
+
+        return True
+
+    check_states(f, POST_FAIL)
+
 
 
 @pytest.mark.parametrize("len_a, expected", [(10, POST_FAIL), (3, CONFIRMED)])
