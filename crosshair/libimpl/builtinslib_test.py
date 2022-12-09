@@ -1956,6 +1956,7 @@ def test_dict___iter___ok() -> None:
         a[10] = "ten"
         return list(a.__iter__())
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1995,17 +1996,25 @@ def test_dict___eq___method() -> None:
 
     check_states(f, POST_FAIL)
 
+def test_create_a_non_empty_dict_ok() -> None:
+    def f(k: Dict[int, str]) -> bool:
+        """
+        pre: len(k) > 3
+        pre: 1 in k
+        post: _ == True
+        """
+        return False
+
+    check_states(f, POST_FAIL)
 
 def test_dict___eq___deep() -> None:
-    def f(a: Dict[bool, set], b: List[Set[float]]) -> object:
+    def f(a: Dict[int, set]) -> object:
         """
-        pre: a == {True: set()}
-        pre: b == [set(), {1.0}]
+        pre: a == {1: set()}
         post: _
         """
-        if a == {True: set()}:
-            if b == [set(), {1.0}]:
-                return False
+        if a == {1: set()}:
+            return False
         return True
 
     check_states(f, POST_FAIL)
@@ -2162,6 +2171,15 @@ def test_dict_setdefault_float_int_comparison() -> None:
 
 def test_dict_over_objects() -> None:
     def f(a: Dict[object, object]) -> int:
+        """
+        post: _ >= 0
+        """
+        return len(a)
+
+    check_states(f, CONFIRMED)
+
+def test_no_heap_key_heap_tuple() -> None:
+    def f(a: Dict[int, object]) -> int:
         """
         post: _ >= 0
         """
