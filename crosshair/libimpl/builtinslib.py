@@ -1262,7 +1262,7 @@ class SymbolicFloat(SymbolicNumberAble, AtomicSymbolicValue):
         with NoTracing():
             space = context_statespace()
             numerator = SymbolicInt("numerator" + space.uniq())
-            denominator = SymbolicInt("denominator" + space.uniq())
+            denominator = SymbolicInt("enominator" + space.uniq())
             space.add(denominator.var > 0)
             space.add(numerator.var == denominator.var * self.var)
         # There are many valid integer ratios to return. Experimentally, both
@@ -1459,6 +1459,361 @@ class SymbolicDict(SymbolicDictOrSet, collections.abc.Mapping):
         with NoTracing():
             return SymbolicDict(self.var, self.python_type)
 
+
+
+class SymbolicListSeq(collections.abc.Sequence):
+    """An immutable symbolic dictionary."""
+
+    def __init__(self, smtvar: Union[str, z3.ExprRef], typ: Type):
+        self.space = context_statespace()
+
+        self.val_pytype = normalize_pytype(type_arg_of(typ, 0))
+        val_ch_types = crosshair_types_for_python_type(self.val_pytype)
+        if val_ch_types:
+            self.ch_val_type: Optional[Type[AtomicSymbolicValue]] = val_ch_types[0]
+            self.smt_val_sort = self.ch_val_type._ch_smt_sort()
+        else:
+            self.ch_val_type = None
+            self.smt_val_sort = HeapRef
+
+        
+        self.ch_key_type  = SymbolicInt
+        self.smt_key_sort = z3.IntSort()
+
+        SymbolicValue.__init__(self, smtvar, typ)
+
+    
+    def __ch_pytype__(self):
+        return list
+
+    def __ch_realize__(self):
+        return list(i for i in self)
+
+    def _arr(self):
+        return self.var[0]
+
+    def _seq(self):
+        return self.var[1]
+
+    def __len__(self):
+        with NoTracing():
+            return SymbolicInt(z3.Length(self._seq()))
+
+    def __bool__(self):
+        with NoTracing():
+            return SymbolicBool(z3.Length(self._seq()) != 0).__bool__()
+
+    def __init_var__(self, typ, varname):
+        assert typ == self.python_type
+        arr_smt_sort = z3.ArraySort(
+            self.smt_key_sort, self.smt_val_sort
+        )
+        return (
+            z3.Const(varname + "_map" + self.statespace.uniq(), arr_smt_sort),
+            z3.Const(varname + "_seq" + self.statespace.uniq(), z3.SeqSort(self.smt_key_sort)),
+        )
+
+    def __eq__(self, other):
+        with NoTracing():
+            (self_arr, self_seq) = self.var
+            has_heapref = (is_heapref_sort(self._arr().sort().domain())
+                           or is_heapref_sort(self._arr().sort().range()))
+
+            if not has_heapref:
+                if isinstance(other, SymbolicListSeq):
+                    (other_arr, other_seq) = other.var
+                    return SymbolicBool(
+                        z3.And(self_seq == other_seq, self_arr == other_arr)
+                    )
+
+            if not isinstance(other, collections.abc.Collection):
+                return False
+
+        if len(self) != len(other):
+            return False
+
+        for idx, v in enumerate(other):
+            if self._get_no_check(idx) != v:
+                return False 
+
+        return True
+
+    def __repr__(self):
+        return str(list(self))
+
+    def _get_no_check(self, k):
+        with NoTracing():
+            pointer = self._seq()[k]
+            not_missing = self._arr()[pointer]
+            self.space.add(self._arr()[pointer] == not_missing)
+            self.space.add(z3.Length(self._seq()) > 0)
+            return smt_to_ch_value(
+                self.statespace,
+                self.snapshot,
+                not_missing, 
+                self.val_pytype,
+            )
+
+
+    def __getitem__(self, k):
+        with NoTracing():
+            if isinstance(k, slice): 
+                if k.step is not None:
+                    with ResumedTracing():
+                        return [x for x in range(*slice.indices(len(self)))]
+
+                start, stop = None, None
+
+                if k.start is None:
+                    start = z3.IntVal(0)
+                elif isinstance(k.start, int):
+                    start = z3.IntVal(k.start)
+                elif isinstance(k.start, SymbolicInt):
+                    start = k.start.var
+                else:
+                    raise IndexError
+
+                if k.stop is None:
+                    stop = z3.Length(self._seq())
+                elif isinstance(k.stop, int):
+                    stop = z3.IntVal(k.stop)
+                elif isinstance(k.stop, SymbolicInt):
+                    stop = k.stop.var
+                else:
+                    raise IndexError
+                
+                sym_start = z3.If(start < 0, z3.Length(self._seq()) + start, start) 
+                sym_start = z3.If(sym_start < 0, 0, sym_start)
+                sym_stop = z3.If(stop < 0, z3.Length(self._seq()) + stop, stop)
+                sym_stop = z3.If(stop >= z3.Length(self._seq()), z3.Length(self._seq()), stop)
+                sym_diff = sym_stop - sym_start
+                sub_seq_len = z3.If(sym_diff > 0, sym_diff, 0)
+                new_seq = z3.SubSeq(self._seq(), sym_start, sub_seq_len)
+                return SymbolicListSeq((self._arr(), new_seq), self.python_type)
+
+            key = None
+            if isinstance(k, int):
+                key = z3.IntVal(k)
+            elif isinstance(k, SymbolicInt):
+                key = k.var
+
+            missing_in_seq = z3.Length(self._seq()) <= key
+            if SymbolicBool(missing_in_seq).__bool__():
+                raise IndexError
+            return self._get_no_check(key)
+
+    def __reversed__(self):
+        return reversed(list(self))
+
+
+    def __iter__(self) -> object:
+        with NoTracing():
+            i = 0
+            while SymbolicBool(z3.Length(self._seq()) > i).__bool__():
+                sym_idx = self._arr()[self._seq()[i]]
+                i += 1
+                yieldval = smt_to_ch_value(self.space, self.snapshot, sym_idx, self.val_pytype)
+                with ResumedTracing():
+                    yield yieldval 
+
+
+    def __contains__(self, other) -> bool:
+#        with NoTracing():
+#            new_key = hash(other)
+#            value = self._arr()[new_key]
+#            val = self.ch_val_type._coerce_to_smt_sort(other)
+#            self.space.add(self._arr()[new_key] == val)
+#            if SymbolicBool(z3.Contains(self._seq(), z3.Unit(z3.IntVal(new_key)))).__bool__():
+#                return True
+        
+        for e in iter(self):
+            if e == other:
+                return True
+        
+        return False
+
+    def copy(self):
+        with NoTracing():
+            return SymbolicListSeq(self.var, self.python_type)
+
+    
+
+class SymbolicSeqDict(collections.abc.Mapping):
+    """An immutable symbolic dictionary."""
+
+    def __init__(self, smtvar: Union[str, z3.ExprRef], typ: Type):
+        self.space = context_statespace()
+
+        self.val_pytype = normalize_pytype(type_arg_of(typ, 1))
+        val_ch_types = crosshair_types_for_python_type(self.val_pytype)
+        if val_ch_types:
+            self.ch_val_type: Optional[Type[AtomicSymbolicValue]] = val_ch_types[0]
+            self.smt_val_sort = self.ch_val_type._ch_smt_sort()
+        else:
+            self.ch_val_type = None
+            self.smt_val_sort = HeapRef
+
+        self.key_pytype = normalize_pytype(type_arg_of(typ, 0))
+        ch_types = crosshair_types_for_python_type(self.key_pytype)
+        if ch_types:
+            self.ch_key_type: Optional[Type[AtomicSymbolicValue]] = ch_types[0]
+            self.smt_key_sort = self.ch_key_type._ch_smt_sort()
+        else:
+            self.ch_key_type = None
+            self.smt_key_sort = HeapRef
+        
+
+        SymbolicValue.__init__(self, smtvar, typ)
+
+        def dict_can_be_iterated():
+            list(self.__iter__())
+            return True
+
+    
+    def __ch_realize__(self):
+        return origin_of(self.python_type)(self)
+
+    def _arr(self):
+        return self.var[0]
+
+    def _seq(self):
+        return self.var[1]
+
+    def __len__(self):
+        with NoTracing():
+            return SymbolicInt(z3.Length(self._seq()))
+
+    def __bool__(self):
+        with NoTracing():
+            return SymbolicBool(z3.Length(self._seq()) != 0).__bool__()
+
+    def __init_var__(self, typ, varname):
+        assert typ == self.python_type
+        arr_smt_sort = z3.ArraySort(
+            self.smt_key_sort, self.smt_val_sort
+        )
+        return (
+            z3.Const(varname + "_map" + self.statespace.uniq(), arr_smt_sort),
+            z3.Const(varname + "_seq" + self.statespace.uniq(), z3.SeqSort(self.smt_key_sort)),
+        )
+
+    def __eq__(self, other):
+        (self_arr, self_seq) = self.var
+        has_heapref = (is_heapref_sort(self._arr().sort().domain())
+                       or is_heapref_sort(self._arr().sort().range()))
+
+        if not has_heapref:
+            if isinstance(other, SymbolicSeqDict):
+                (other_arr, other_seq) = other.var
+                return SymbolicBool(
+                    z3.And(self_seq == other_seq, self_arr == other_arr)
+                )
+
+        if not isinstance(other, collections.abc.Mapping):
+            return False
+
+        
+        with NoTracing():
+            possible_item = None if len(other) == 0 else next(iter(other))
+
+            if isinstance(possible_item, (int, float)):
+                constructor = z3.IntVal if isinstance(possible_item, int) else z3.RealVal
+                keys = reduce(
+                    lambda acc, x: z3.Concat(acc, z3.Unit(constructor(x))),
+                    sorted(other),
+                    z3.Empty(z3.SeqSort(self.smt_key_sort))
+                )
+
+                if not SymbolicBool(self._seq() == keys).__bool__():
+                   return False
+            else: 
+                with ResumedTracing():
+                    len(self) == len(other) and (
+                            len(other) == 0
+                             or all(e in self for e in other))
+
+            for k, v in other.items():
+                with ResumedTracing():
+                    if self._get_no_check(k) != v:
+                        return False 
+
+        return True
+
+    def __repr__(self):
+        return str(dict(self.items()))
+
+    def _get_no_check(self, k):
+        with NoTracing():
+            smt_key = self.ch_key_type._coerce_to_smt_sort(k)
+            not_missing = self._arr()[smt_key]
+            self.space.add(self._arr()[smt_key] == not_missing)
+            return smt_to_ch_value(
+                self.statespace,
+                self.snapshot,
+                not_missing, 
+                self.val_pytype,
+            )
+
+    # TODO: __contains__ could be implemented without any path forks
+
+    def __getitem__(self, k):
+        with NoTracing():
+            if not self.ch_key_type: 
+                raise KeyError
+            smt_key = self.ch_key_type._coerce_to_smt_sort(k)
+            if smt_key is None:
+                # TODO: this class isn't used with heap-able keys any more I think.
+                # So, remove?
+                if getattr(k, "__hash__", None) is None:
+                    raise TypeError("unhashable type")
+                for self_k in iter(self):
+                    if self_k == k:
+                        return self[self_k]
+                raise KeyError
+            missing_in_seq = z3.Not(z3.Contains(self._seq(), z3.Unit(smt_key)))
+            if SymbolicBool(missing_in_seq).__bool__():
+                raise KeyError
+            return self._get_no_check(k)
+
+    def __reversed__(self):
+        return reversed(list(self))
+
+
+    def __iter__(self) -> object:
+        with NoTracing():
+            i = 0
+            current_element = None
+            z3_dict_keys = []
+            while SymbolicBool(i < z3.Length(self._seq())).__bool__():
+                sym_idx = self._seq()[i]
+            # Irocanlly shorted is faster
+                if i != 0 and self.key_pytype in [int, float]:
+                    self.statespace.add(current_element < sym_idx)
+
+                current_element = sym_idx
+                i += 1
+                z3_dict_keys.append(sym_idx)
+
+            #if self.key_pytype not in [int, float] and len(z3_dict_keys) > 0:
+            #if len(z3_dict_keys) > 0:
+                #self.statespace.add(z3.simplify(z3.Distinct(*z3_dict_keys), blast_distinct=True))
+
+            for e in self._simple_deterministic_order_shuffle(z3_dict_keys):
+                yieldval = smt_to_ch_value(self.space, self.snapshot, e, self.key_pytype)
+                with ResumedTracing():
+                    yield yieldval 
+
+    def _simple_deterministic_order_shuffle(self, l: List[int]) -> List[int]:
+        if len(l) < 2:
+            return l
+        
+        cut = len(l)//2
+        return list(reversed(l[cut:])) + l[:cut]
+
+    def copy(self):
+        with NoTracing():
+            return SymbolicSeqDict(self.var, self.python_type)
+
 class SymbolicSeqDict(collections.abc.Mapping):
     """An immutable symbolic dictionary."""
 
@@ -1607,6 +1962,7 @@ class SymbolicSeqDict(collections.abc.Mapping):
             z3_dict_keys = []
             while SymbolicBool(i < z3.Length(self._seq())).__bool__():
                 sym_idx = self._seq()[i]
+            # Irocanlly shorted is faster
             #    if i != 0 and self.key_pytype in [int, float]:
             #        self.statespace.add(current_element < sym_idx)
 
@@ -4041,7 +4397,7 @@ def make_dictionary(creator: SymbolicFactory, key_type=Any, value_type=Any):
 
         space.defer_assumption("dict keys are unique", ensure_keys_are_unique)
         return SimpleDict(kv)
-    return ShellMutableMap(SymbolicSeqDict(varname, creator.pytype))
+    return ShellMutableMap(SymbolicDict(varname, creator.pytype))
 
 
 def make_tuple(creator: SymbolicFactory, *type_args):
@@ -4775,13 +5131,13 @@ def make_registrations():
     register_type(int, make_optional_smt(SymbolicInt))
     register_type(float, make_optional_smt(SymbolicFloat))
     register_type(str, make_optional_smt(LazyIntSymbolicStr))
-    register_type(list, make_optional_smt(SymbolicList))
+    register_type(list, make_optional_smt(lambda x, y: ShellMutableSequence(SymbolicListSeq(x, y))))
     register_type(dict, make_dictionary)
     register_type(range, make_range)
     register_type(tuple, make_tuple)
     register_type(set, make_set)
     register_type(frozenset, make_optional_smt(SymbolicFrozenSet))
-    register_type(FrozenSet[int], make_optional_smt(SymbolicIntegerSet))
+    #register_type(FrozenSet[int], make_optional_smt(SymbolicIntegerSet))
     register_type(type, make_optional_smt(SymbolicType))
     register_type(
         collections.abc.Callable,

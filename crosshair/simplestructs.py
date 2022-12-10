@@ -700,6 +700,12 @@ class ShellMutableSequence(collections.abc.MutableSequence, SeqBase):
     def reverse(self):
         self.inner = list(reversed(self.inner))
 
+    def __ch_pytype__(self):
+        if hasattr(self.inner, '__ch_pytype__'):
+            return self.inner.__ch_pytype__()
+        else:
+            return type(self.inner)
+
 
 AbcSet = collections.abc.Set
 
