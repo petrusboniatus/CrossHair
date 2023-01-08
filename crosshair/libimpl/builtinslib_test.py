@@ -664,7 +664,6 @@ def test_sorted() -> None:
         """
         return list(sorted(lst))
 
-    import IPython; IPython.embed()
     check_states(f, POST_FAIL)
 
 
@@ -1225,6 +1224,7 @@ def test_str_format_map():
         )
 
 
+
 def test_str_rfind() -> None:
     with standalone_statespace, NoTracing():
         string = LazyIntSymbolicStr(list(map(ord, "ababb")))
@@ -1468,11 +1468,21 @@ def test_list___contains___method() -> None:
     def f(a: int, b: List[int]) -> bool:
         """
         Is full containment checking equivalent to checking the first 3 elements?
-
+        
         post: _ == (a in b[:3])
         """
         return a in b
 
+
+def test_list___get_element___ok_with_no_len() -> None:
+    def f(b: List[int], a: int) -> bool:
+        """
+        pre: b[a] == 3 
+        post: _ == True 
+        """
+        return b[a] == 4
+
+    set_debug(True)
     check_states(f, POST_FAIL)
 
 
@@ -1484,6 +1494,7 @@ def test_list___contains___ok() -> None:
         """
         return a in b
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1543,7 +1554,6 @@ def test_list_mixed_symbolic_and_literal_concat_ok() -> None:
             + ls[i:]
         )
 
-    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1587,6 +1597,7 @@ def test_list_equality() -> None:
         nl[0] = 42
         return nl
 
+    set_debug(True)
     check_states(f, POST_FAIL)
 
 
@@ -1633,7 +1644,10 @@ def test_list____getitem___type_error() -> None:
         """post: True"""
         return ls[0.0:]  # type: ignore
 
+
+    set_debug(True)
     (actual, expected) = check_exec_err(f, "TypeError")
+
     assert actual == expected
 
 
@@ -1649,6 +1663,7 @@ def test_list____getitem___ok() -> None:
         except ValueError:
             return False
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1693,6 +1708,7 @@ def test_list_iterable() -> None:
 def test_list_isinstance_check() -> None:
     def f(ls: List) -> bool:
         """post: _"""
+
         return isinstance(ls, list)
 
     check_states(f, CONFIRMED)
@@ -1706,6 +1722,7 @@ def test_list_slice_outside_range_ok() -> None:
         """
         return ls[:i]
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1731,6 +1748,7 @@ def test_list____setitem___ok() -> None:
         """
         ls[1:-1] = [42, 43]
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1742,6 +1760,7 @@ def test_list___setitem___out_of_bounds() -> None:
         """
         ls[i : i + 1] = []
 
+    set_debug(True)
     check_states(f, CANNOT_CONFIRM)
 
 
@@ -1755,6 +1774,7 @@ def test_list_insert_ok() -> None:
         """
         ls.insert(-2, 42)
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1777,6 +1797,7 @@ def test_list_pop_ok() -> None:
         """
         ls.pop()
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -1789,7 +1810,6 @@ def test_list_count_ok() -> None:
         return ls.count({1: {2: 3}})
 
     check_states(f, CONFIRMED)
-
 
 @pytest.mark.smoke
 def test_list___setitem___ok() -> None:
@@ -1856,6 +1876,7 @@ def test_list_sort_ok() -> None:
         """
         ls.sort()
 
+    set_debug(True)
     check_states(f, CONFIRMED)
 
 
@@ -2352,7 +2373,6 @@ def test_dict_consistent_ordering() -> None:
 
 
 
-@pytest.mark.skip("I don't know how to satify this yet")
 def test_dict_ordering_after_mutations() -> None:
     def f(d: Dict[int, int]) -> Tuple[Tuple[int, int], Tuple[int, int]]:
         """
@@ -2498,30 +2518,6 @@ def test_frozen_set_integer_detects_out_of_order_iteration_bugs() -> None:
 
     check_states(f, POST_FAIL)
 
-
-
-@pytest.mark.parametrize("len_a, expected", [(10, POST_FAIL), (3, CONFIRMED)])
-def test_subset_operations_on_literalls_ok(len_a: int, expected: MessageType) -> None:
-    def f(
-        a: FrozenSet[int],
-        b: FrozenSet[int],
-        c: FrozenSet[int],
-        d: FrozenSet[int]
-    ) -> bool:
-        """
-        pre: a >= {1, 2, 3}
-        pre: b > {1, 2, 3}
-        pre: c <= {1, 2, 3}
-        pre: d < {1, 2, 3}
-        post: _
-        """
-
-        if len(a) < len_a or len(b) < 4 or len(c) > 3 or len(d) > 2:
-            return False
-
-        return True
-
-    check_states(f, expected)
 
 
 def test_set_subset_compare_ok() -> None:

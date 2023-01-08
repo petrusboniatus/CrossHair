@@ -1386,6 +1386,7 @@ def attempt_call(
         debug("Starting postcondition")
         with ResumedTracing():
             isok = bool(post_condition.evaluate(lcls))
+
     if efilter.ignore:
         debug("Ignored exception in postcondition.", efilter.analysis)
         return efilter.analysis
